@@ -1,0 +1,44 @@
+Illustox - Repebble App Store listing
+
+Wird bei jeder Veroeffentlichung mit aktualisiert. Englisch, reiner Text,
+jeder Absatz und jeder Listenpunkt auf EINER Zeile (der Store uebernimmt
+Umbrueche woertlich). Pruefen mit .\pb.ps1 finish illustox
+
+-------------------------------------------------------------------------
+
+TITLE
+
+Illustox
+
+
+TAGLINE
+
+A new hand-drawn-looking mountain landscape every hour, every quarter or every minute.
+
+
+DESCRIPTION
+
+Illustox paints flat, boho-style landscape illustrations on your wrist: layered mountain ridges, a sun by day and a crescent moon by night, and now and then a valley with a winding river. Every scene is generated on the watch, so you will hardly ever see the same picture twice. The only thing on top is the time, in a large, light typeface.
+
+Pick one of six colour worlds or let every new scene choose its own. On Pebble Round 2 the landscape fills the round display, on Pebble Time 2 the full rectangle.
+
+
+SETTINGS
+
+- Colour world - Desert, Dusk, Sage, Ocean, Sunset, Candy, or Surprise me (a random world for every scene).
+- New landscape - every minute, every 15 minutes or every hour.
+- Shake for a new landscape - flick your wrist to paint a fresh scene right away.
+
+12 or 24 hour format follows the watch setting.
+
+
+CATEGORY
+
+Watchfaces
+
+
+RELEASE NOTES
+
+1.0.0
+
+First release.

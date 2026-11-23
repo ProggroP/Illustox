@@ -1,0 +1,45 @@
+{
+    "author": "Axel Kark",
+    "dependencies": {
+        "@rebble/clay": "1.0.8"
+    },
+    "keywords": [
+        "pebble-app",
+        "watchface",
+        "illustox"
+    ],
+    "name": "illustox",
+    "pebble": {
+        "capabilities": [
+            "configurable"
+        ],
+        "displayName": "Illustox",
+        "enableMultiJS": true,
+        "messageKeys": [
+            "INTERVAL",
+            "WORLD",
+            "SHAKE"
+        ],
+        "projectType": "native",
+        "resources": {
+            "media": [
+                {
+                    "characterRegex": "[0-9:]",
+                    "file": "fonts/Roboto-Light.ttf",
+                    "name": "ROBOTO_LIGHT_56",
+                    "type": "font"
+                }
+            ]
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "emery",
+            "gabbro"
+        ],
+        "uuid": "01915bbe-85f0-4afa-8ed4-e5a24daa9deb",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "1.0.0"
+}
