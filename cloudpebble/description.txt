@@ -26,6 +26,7 @@ Pick one of six colour worlds or let every new scene choose its own. On Pebble R
 SETTINGS
 
 - Colour world - Desert, Dusk, Sage, Ocean, Sunset, Candy, or Surprise me (a random world for every scene).
+- Style - Flat uses pure palette colours, Print blends two colours per area in a fine dot pattern for softer pastel tones and a gentle sky gradient.
 - New landscape - every minute, every 15 minutes or every hour.
 - Shake for a new landscape - flick your wrist to paint a fresh scene right away.
 
@@ -38,6 +39,10 @@ Watchfaces
 
 
 RELEASE NOTES
+
+1.1.0
+
+New Style setting: Print blends two palette colours per area in a fine dot pattern for softer pastel tones and a gentle sky gradient. Flat stays the default.
 
 1.0.0
 

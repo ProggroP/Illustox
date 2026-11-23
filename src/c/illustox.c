@@ -8,35 +8,81 @@
 //
 // Die Szene wird bei jedem Neuzeichnen aus dem Samen neu berechnet, es gibt
 // also keinen Szenen-Zustand ausser dem Samen selbst.
+//
+// Alle Flaechen schreibt der Code selbst in den Framebuffer. Zwei Stile:
+// "Flat" nimmt je Flaeche eine der 64 Palettenfarben, "Print" rastert je
+// Flaeche zwei benachbarte Palettenfarben per 4x4-Bayer-Matrix und gibt dem
+// Himmel einen Verlauf des Mischanteils.
 
 #include <pebble.h>
 
 // ---- Farbwelten ------------------------------------------------------------
 // Je Welt: Himmel, Sonne/Mond, Schrift, vier Bergfarben von hinten nach vorn.
-// Die Pebble-Palette kennt nur 64 Farben (Kanaele 00/55/AA/FF); Gabbro zeigt
-// sie zusaetzlich entsaettigt, Gelb wird dort zu Creme.
+// flat: je eine Palettenfarbe (Stil Flat).
+// soft: je zwei benachbarte Palettenfarben a/b und ein Mischanteil von b in
+// Sechzehnteln (Stil Print). Nur zwei Farben je Flaeche, damit der Farbton
+// sauber bleibt; kanalweises Dithering ergab graue, matschige Flaechen.
+// Gabbro zeigt alles entsaettigt.
 typedef struct {
   uint32_t sky, sun, ink;
   uint32_t layer[4];
+} Flat;
+
+typedef struct {
+  uint32_t a, b;
+  uint8_t lv;         // 0 = rein a, 16 = rein b
+} Mix;
+
+typedef struct {
+  Mix sky;            // lv gilt oben
+  uint8_t sky_lv_bottom;
+  Mix sun;
+  Mix layer[4];
+} Soft;
+
+typedef struct {
+  Flat flat;
+  Soft soft;
 } World;
 
 static const World WORLDS[] = {
   // 0 Desert: Creme, Pfirsich, Rost, Petrol, Nachtblau (wie die Vorlage)
-  { 0xFFFFAA, 0xFF5500, 0x550000, { 0xFFAA55, 0xAA5500, 0x005555, 0x000055 } },
+  { { 0xFFFFAA, 0xFF5500, 0x550000, { 0xFFAA55, 0xAA5500, 0x005555, 0x000055 } },
+    { { 0xFFFFFF, 0xFFFFAA, 8 }, 15, { 0xFF5500, 0xFFAA55, 6 },
+      { { 0xFFAA55, 0xFFAAAA, 5 }, { 0xAA5500, 0xAA5555, 5 },
+        { 0x005555, 0x005555, 0 }, { 0x000055, 0x000055, 0 } } } },
   // 1 Dusk: Rosa Himmel, Flieder bis Aubergine
-  { 0xFFAAAA, 0xFFFFAA, 0x550055, { 0xAA55AA, 0x5555AA, 0x550055, 0x000055 } },
+  { { 0xFFAAAA, 0xFFFFAA, 0x550055, { 0xAA55AA, 0x5555AA, 0x550055, 0x000055 } },
+    { { 0xFFFFFF, 0xFFAAAA, 9 }, 14, { 0xFFFFAA, 0xFFFFFF, 8 },
+      { { 0xAA55AA, 0xFFAAFF, 5 }, { 0x5555AA, 0xAA55AA, 5 },
+        { 0x550055, 0x5555AA, 4 }, { 0x000055, 0x550055, 6 } } } },
   // 2 Sage: Creme, Oliv und Waldgruen
-  { 0xFFFFAA, 0xFFAA55, 0x005500, { 0xAAAA55, 0x55AA55, 0x555500, 0x005500 } },
+  { { 0xFFFFAA, 0xFFAA55, 0x005500, { 0xAAAA55, 0x55AA55, 0x555500, 0x005500 } },
+    { { 0xFFFFFF, 0xFFFFAA, 8 }, 15, { 0xFFAA55, 0xFFFFAA, 4 },
+      { { 0xAAAA55, 0xFFFFAA, 5 }, { 0x55AA55, 0xAAAA55, 6 },
+        { 0x555500, 0x55AA55, 5 }, { 0x005500, 0x000000, 4 } } } },
   // 3 Ocean: Eisblau, Kadettblau bis Tiefsee
-  { 0xAAFFFF, 0xFFFFFF, 0x000055, { 0x55AAAA, 0x0055AA, 0x005555, 0x000055 } },
+  { { 0xAAFFFF, 0xFFFFFF, 0x000055, { 0x55AAAA, 0x0055AA, 0x005555, 0x000055 } },
+    { { 0xFFFFFF, 0xAAFFFF, 6 }, 13, { 0xFFAA55, 0xFFFFAA, 8 },
+      { { 0x55AAAA, 0xAAFFFF, 6 }, { 0x0055AA, 0x55AAAA, 6 },
+        { 0x005555, 0x0055AA, 6 }, { 0x000055, 0x005555, 5 } } } },
   // 4 Sunset: Apricot-Himmel, Koralle bis Nachtblau (Schwarz verschwimmt
   // auf Gabbro mit dem Rand)
-  { 0xFFAA55, 0xFFFFAA, 0x550000, { 0xFF5555, 0xAA5555, 0x550000, 0x000055 } },
+  { { 0xFFAA55, 0xFFFFAA, 0x550000, { 0xFF5555, 0xAA5555, 0x550000, 0x000055 } },
+    { { 0xFFAA55, 0xFFAAAA, 9 }, 3, { 0xFFFFAA, 0xFFFFFF, 8 },
+      { { 0xFF5555, 0xFFAAAA, 6 }, { 0xAA5555, 0xFF5555, 4 },
+        { 0x550000, 0xAA5555, 5 }, { 0x000055, 0x550055, 6 } } } },
   // 5 Candy: Weiss, Pastellrosa, Lavendel, Himmelblau
-  { 0xFFFFFF, 0xFFAA55, 0x5555AA, { 0xFFAAFF, 0xAAAAFF, 0x55AAFF, 0x5555AA } },
+  { { 0xFFFFFF, 0xFFAA55, 0x5555AA, { 0xFFAAFF, 0xAAAAFF, 0x55AAFF, 0x5555AA } },
+    { { 0xFFFFFF, 0xFFAAFF, 1 }, 6, { 0xFFAA55, 0xFFAAAA, 8 },
+      { { 0xFFAAFF, 0xFFFFFF, 3 }, { 0xAAAAFF, 0xAA55FF, 4 },
+        { 0x55AAFF, 0xAAAAFF, 4 }, { 0x5555AA, 0x0055AA, 6 } } } },
 };
 #define WORLD_COUNT        ((int)ARRAY_LENGTH(WORLDS))
 #define WORLD_SURPRISE     99     // jede Szene eine zufaellige Welt
+
+#define TEXTURE_FLAT       0
+#define TEXTURE_PRINT      1
 
 // ---- Layout ----------------------------------------------------------------
 // Roboto Light 56, nur Ziffern und Doppelpunkt (Bitham 42 Light war zu klein)
@@ -60,7 +106,8 @@ static const World WORLDS[] = {
 #define RIDGE_BASE_FRONT   880    // Grundlinie der vordersten Kette
 #define RIDGE_AMP_BACK     170    // Hoehe der Gipfel ueber der Grundlinie
 #define RIDGE_AMP_FRONT    110
-#define VALLEY_CHANCE      30    // Prozent der Szenen mit Tal und Fluss
+#define VALLEY_CHANCE      30     // Prozent der Szenen mit Tal und Fluss
+#define SKY_GRADIENT_END   600    // Print: Himmelsverlauf endet hier
 
 // ---- Zeit ------------------------------------------------------------------
 #define DAY_FROM_HOUR      7      // Sonne von 7 bis 18:59, sonst Mond
@@ -80,6 +127,7 @@ typedef struct {
   uint8_t interval;   // Minuten je Szene: 1, 15 oder 60
   uint8_t world;      // Index in WORLDS oder WORLD_SURPRISE
   bool    shake;      // Schuetteln zeigt eine neue Szene
+  uint8_t texture;    // TEXTURE_FLAT oder TEXTURE_PRINT (seit 1.1.0)
 } Settings;
 
 static Window *s_window;
@@ -111,6 +159,94 @@ static int rnd_range(int lo, int hi) {
   return lo + (int)(rnd() % (uint32_t)(hi - lo + 1));
 }
 
+// ---- Farbe und Framebuffer -------------------------------------------------
+// Eine Flaeche ist entweder eine feste Palettenfarbe (flat) oder ein
+// Bayer-Raster aus zwei Palettenfarben; der Mischanteil kann sich von Zeile
+// ya (lv_a) bis Zeile yb (lv_b) aendern (Himmelsverlauf).
+typedef struct {
+  bool dither;
+  uint8_t flat;       // argb-Byte fuer den Stil Flat
+  uint8_t ca, cb;     // argb-Bytes der beiden Rasterfarben
+  uint8_t lv_a, lv_b; // Anteil von cb in Sechzehnteln
+  int16_t ya, yb;
+} Paint;
+
+static const uint8_t BAYER4[4][4] = {
+  {  0,  8,  2, 10 },
+  { 12,  4, 14,  6 },
+  {  3, 11,  1,  9 },
+  { 15,  7, 13,  5 },
+};
+
+#define FB_ROWS_MAX        260
+static GBitmapDataRowInfo s_rows[FB_ROWS_MAX];
+static int s_fb_w, s_fb_h;
+
+static Paint paint_solid(uint32_t flat_hex, Mix soft) {
+  Paint p = {
+    .dither = s_settings.texture == TEXTURE_PRINT,
+    .flat = GColorFromHEX(flat_hex).argb,
+    .ca = GColorFromHEX(soft.a).argb, .cb = GColorFromHEX(soft.b).argb,
+    .lv_a = soft.lv, .lv_b = soft.lv,
+    .ya = 0, .yb = 1,
+  };
+  return p;
+}
+
+// Mischanteil einer Zeile in 1/256 (Verlauf zwischen lv_a und lv_b)
+static int paint_level(const Paint *p, int y) {
+  if (y <= p->ya) return p->lv_a * 16;
+  if (y >= p->yb) return p->lv_b * 16;
+  return p->lv_a * 16 + (p->lv_b - p->lv_a) * 16 * (y - p->ya) / (p->yb - p->ya);
+}
+
+// Rasterpunkt: cb, wenn die Bayer-Schwelle unter dem Mischanteil liegt
+static inline uint8_t paint_px(const Paint *p, int level, int x, int y) {
+  return (BAYER4[y & 3][x & 3] * 16 + 8 < level) ? p->cb : p->ca;
+}
+
+// waagerechte Strecke [x0, x1) in Zeile y, auf das sichtbare Display begrenzt
+static void span(int y, int x0, int x1, const Paint *p) {
+  if (y < 0 || y >= s_fb_h) return;
+  GBitmapDataRowInfo *ri = &s_rows[y];
+  if (x0 < ri->min_x) x0 = ri->min_x;
+  if (x1 > ri->max_x + 1) x1 = ri->max_x + 1;
+  if (x0 >= x1) return;
+  if (!p->dither) {
+    memset(ri->data + x0, p->flat, x1 - x0);
+    return;
+  }
+  int level = paint_level(p, y);
+  uint8_t pat[4];
+  for (int i = 0; i < 4; i++) pat[i] = paint_px(p, level, i, y);
+  for (int x = x0; x < x1; x++) ri->data[x] = pat[x & 3];
+}
+
+// senkrechte Strecke von y0 bis zum unteren Rand in Spalte x
+static void column(int x, int y0, const Paint *p) {
+  if (x < 0 || x >= s_fb_w) return;
+  if (y0 < 0) y0 = 0;
+  for (int y = y0; y < s_fb_h; y++) {
+    GBitmapDataRowInfo *ri = &s_rows[y];
+    if (x < ri->min_x || x > ri->max_x) continue;
+    ri->data[x] = p->dither ? paint_px(p, paint_level(p, y), x, y) : p->flat;
+  }
+}
+
+static int isqrt(int n) {
+  if (n <= 0) return 0;
+  int x = n, y = (x + 1) / 2;
+  while (y < x) { x = y; y = (x + n / x) / 2; }
+  return x;
+}
+
+static void disc(int cx, int cy, int r, const Paint *p) {
+  for (int dy = -r; dy <= r; dy++) {
+    int hw = isqrt(r * r - dy * dy);
+    span(cy + dy, cx - hw, cx + hw + 1, p);
+  }
+}
+
 // ---- Kurven ----------------------------------------------------------------
 // Weicher Uebergang 0..1 (als 0..65535): (1 - cos(pi * t)) / 2
 static int32_t ease(int32_t num, int32_t den) {
@@ -138,16 +274,12 @@ static int wiggle_at(const Wiggle *w, int x) {
   return (int)(sin_lookup(w->phase + w->freq * x) * w->amp / TRIG_MAX_RATIO);
 }
 
-static void fill_column(GContext *ctx, int x, int y, int h) {
-  if (y < h) graphics_fill_rect(ctx, GRect(x, y, 1, h - y), 0, GCornerNone);
-}
-
 // ---- Bergkette -------------------------------------------------------------
 // Stuetzpunkte ueber die Breite, dazwischen weich (Huegel) oder gerade
 // (Gipfel) interpoliert, darueber die Unruhe.
 #define RIDGE_POINTS_MAX   8
 
-static void draw_ridge(GContext *ctx, GRect b, int base, int amp, GColor color) {
+static void draw_ridge(GRect b, int base, int amp, const Paint *paint) {
   int n = rnd_range(3, 6);
   bool sharp = rnd_range(0, 99) < 45;
   int px[RIDGE_POINTS_MAX];
@@ -166,7 +298,6 @@ static void draw_ridge(GContext *ctx, GRect b, int base, int amp, GColor color) 
   }
   Wiggle wg = wiggle_new(sharp ? 2 : 3);
 
-  graphics_context_set_fill_color(ctx, color);
   int seg = 0;
   for (int x = 0; x < w; x++) {
     while (seg < n - 2 && x > px[seg + 1]) seg++;
@@ -176,17 +307,15 @@ static void draw_ridge(GContext *ctx, GRect b, int base, int amp, GColor color) 
     if (f < 0) f = 0;
     if (f > TRIG_MAX_RATIO) f = TRIG_MAX_RATIO;
     int y = py[seg] + (int)((py[seg + 1] - py[seg]) * f / TRIG_MAX_RATIO);
-    fill_column(ctx, x, y + wiggle_at(&wg, x), b.size.h);
+    column(x, y + wiggle_at(&wg, x), paint);
   }
 }
 
 // Einzelner Berg mit Gipfel (px, py); die Flanken fallen weich bis
 // (left_x, left_y) bzw. (right_x, right_y). Fuer das Tal.
-static void draw_mount(GContext *ctx, GRect b, int px, int py,
-                       int left_x, int left_y, int right_x, int right_y,
-                       GColor color) {
+static void draw_mount(GRect b, int px, int py, int left_x, int left_y,
+                       int right_x, int right_y, const Paint *paint) {
   Wiggle wg = wiggle_new(2);
-  graphics_context_set_fill_color(ctx, color);
   int from = left_x < 0 ? 0 : left_x;
   int to = right_x > b.size.w ? b.size.w : right_x;
   for (int x = from; x < to; x++) {
@@ -196,45 +325,41 @@ static void draw_mount(GContext *ctx, GRect b, int px, int py,
     } else {
       y = py + (int)((right_y - py) * ease(x - px, right_x - px) / TRIG_MAX_RATIO);
     }
-    fill_column(ctx, x, y + wiggle_at(&wg, x), b.size.h);
+    column(x, y + wiggle_at(&wg, x), paint);
   }
 }
 
 // ---- Himmelskoerper --------------------------------------------------------
-static void draw_sky_body(GContext *ctx, GRect b, const World *wd, bool day,
+static void draw_sky_body(GRect b, const Paint *sun, const Paint *sky, bool day,
                           int top, int bottom) {
   int r = rnd_range(SUN_R_MIN, SUN_R_MAX);
   int x = rnd_range(SIDE_MARGIN + r, b.size.w - SIDE_MARGIN - r);
   int y = rnd_range(top + r, bottom);
-  GPoint c = GPoint(x, y);
-  graphics_context_set_fill_color(ctx, GColorFromHEX(wd->sun));
-  graphics_fill_circle(ctx, c, r);
+  disc(x, y, r, sun);
   if (!day) {
     // Mondsichel: versetzter Kreis in Himmelsfarbe frisst die Scheibe an
     int dir = (rnd() & 1) ? 1 : -1;
-    graphics_context_set_fill_color(ctx, GColorFromHEX(wd->sky));
-    graphics_fill_circle(ctx, GPoint(x + dir * r * 2 / 5, y - r / 4), r * 9 / 10);
+    disc(x + dir * r * 2 / 5, y - r / 4, r * 9 / 10, sky);
   }
 }
 
 // ---- Fluss -----------------------------------------------------------------
 // Windet sich von (x_top, y_top) bis zum unteren Rand bei x_bottom und wird
 // dabei breiter (Perspektive).
-static void draw_river(GContext *ctx, GRect b, int x_top, int y_top,
-                       int x_bottom, int width_bottom, GColor color) {
+static void draw_river(GRect b, int x_top, int y_top, int x_bottom,
+                       int width_bottom, const Paint *paint) {
   int32_t phase = rnd_range(0, TRIG_MAX_ANGLE);
   int bends = rnd_range(2, 3);
   int amp = rnd_range(b.size.w / 12, b.size.w / 7);
-  int span = b.size.h - y_top;
-  graphics_context_set_fill_color(ctx, color);
+  int sp = b.size.h - y_top;
   for (int y = y_top; y < b.size.h; y++) {
     int d = y - y_top;
-    int cx = x_top + (x_bottom - x_top) * d / span;
+    int cx = x_top + (x_bottom - x_top) * d / sp;
     // Ausschlag waechst nach vorn, oben bleibt der Fluss schmal und ruhig
-    int32_t a = phase + (int32_t)bends * (TRIG_MAX_ANGLE / 2) * d / span;
-    cx += (int)(sin_lookup(a) * amp / TRIG_MAX_RATIO) * d / span;
-    int hw = 1 + width_bottom * d / span / 2;
-    graphics_fill_rect(ctx, GRect(cx - hw, y, hw * 2, 1), 0, GCornerNone);
+    int32_t a = phase + (int32_t)bends * (TRIG_MAX_ANGLE / 2) * d / sp;
+    cx += (int)(sin_lookup(a) * amp / TRIG_MAX_RATIO) * d / sp;
+    int hw = 1 + width_bottom * d / sp / 2;
+    span(y, cx - hw, cx + hw, paint);
   }
 }
 
@@ -243,7 +368,11 @@ static int permille(int h, int pm) {
   return h * pm / 1000;
 }
 
-static void draw_ridges(GContext *ctx, GRect b, const World *wd) {
+static Paint layer_paint(const World *wd, int i) {
+  return paint_solid(wd->flat.layer[i], wd->soft.layer[i]);
+}
+
+static void draw_ridges(GRect b, const World *wd) {
   // drei oder vier Ketten; bei drei faellt eine der hinteren Farben weg
   int n = rnd_range(3, 4);
   int skip = (n == 3) ? rnd_range(0, 2) : -1;
@@ -255,28 +384,33 @@ static void draw_ridges(GContext *ctx, GRect b, const World *wd) {
     int amp = permille(b.size.h, RIDGE_AMP_BACK
                 + (RIDGE_AMP_FRONT - RIDGE_AMP_BACK) * k / (n - 1));
     amp = amp * rnd_range(65, 100) / 100;
-    draw_ridge(ctx, b, base + rnd_range(-6, 6), amp, GColorFromHEX(wd->layer[i]));
+    Paint p = layer_paint(wd, i);
+    draw_ridge(b, base + rnd_range(-6, 6), amp, &p);
     k++;
   }
 }
 
-static void draw_valley(GContext *ctx, GRect b, const World *wd) {
+static void draw_valley(GRect b, const World *wd, const Paint *sky) {
   int w = b.size.w, h = b.size.h;
-  // ferne Kette(n) hinter der Ebene
+  // ferne Kette hinter der Ebene
   int ground = permille(h, rnd_range(600, 660));
-  draw_ridge(ctx, b, ground, permille(h, rnd_range(150, 220)), GColorFromHEX(wd->layer[0]));
+  Paint p0 = layer_paint(wd, 0);
+  draw_ridge(b, ground, permille(h, rnd_range(150, 220)), &p0);
 
   // Ebene in der zweiten Farbe
-  graphics_context_set_fill_color(ctx, GColorFromHEX(wd->layer[1]));
-  graphics_fill_rect(ctx, GRect(0, ground, w, h - ground), 0, GCornerNone);
+  Paint p1 = layer_paint(wd, 1);
+  for (int y = ground; y < h; y++) span(y, 0, w, &p1);
 
   // Die beiden Berge im Vordergrund lassen unten eine Luecke fuer den Fluss
   bool flip = rnd() & 1;
   int gap_l = w * rnd_range(38, 48) / 100;
   int gap_r = w * rnd_range(52, 62) / 100;
   int river_x = (gap_l + gap_r) / 2;
-  draw_river(ctx, b, w * rnd_range(35, 65) / 100, ground, river_x,
-             (gap_r - gap_l) * rnd_range(45, 70) / 100, GColorFromHEX(wd->sky));
+  // Der Fluss spiegelt den Himmel in dessen hellster Farbe
+  Paint water = *sky;
+  water.lv_b = water.lv_a;
+  draw_river(b, w * rnd_range(35, 65) / 100, ground, river_x,
+             (gap_r - gap_l) * rnd_range(45, 70) / 100, &water);
 
   // hoher Berg auf der einen, niedrigerer auf der anderen Seite
   int tall = permille(h, rnd_range(380, 470));
@@ -285,12 +419,12 @@ static void draw_valley(GContext *ctx, GRect b, const World *wd) {
   int low_y = flip ? tall : low;
   // links: Gipfel im linken Drittel, rechte Flanke endet unten an der Luecke
   int lp = w * rnd_range(8, 30) / 100;
-  draw_mount(ctx, b, lp, tall_y, -w / 3, tall_y + permille(h, 120), gap_l, h,
-             GColorFromHEX(wd->layer[3]));
+  Paint p3 = layer_paint(wd, 3);
+  draw_mount(b, lp, tall_y, -w / 3, tall_y + permille(h, 120), gap_l, h, &p3);
   // rechts: Gipfel im rechten Drittel, linke Flanke endet unten an der Luecke
   int rp = w * rnd_range(70, 92) / 100;
-  draw_mount(ctx, b, rp, low_y, gap_r, h, w + w / 3, low_y + permille(h, 120),
-             GColorFromHEX(wd->layer[2]));
+  Paint p2 = layer_paint(wd, 2);
+  draw_mount(b, rp, low_y, gap_r, h, w + w / 3, low_y + permille(h, 120), &p2);
 }
 
 static uint32_t scene_seed(time_t now) {
@@ -308,23 +442,35 @@ static void canvas_update(Layer *layer, GContext *ctx) {
   int wi = s_settings.world < WORLD_COUNT ? s_settings.world : rnd_range(0, WORLD_COUNT - 1);
   const World *wd = &WORLDS[wi];
 
-  graphics_context_set_antialiased(ctx, false);
-  graphics_context_set_fill_color(ctx, GColorFromHEX(wd->sky));
-  graphics_fill_rect(ctx, b, 0, GCornerNone);
+  GBitmap *fb = graphics_capture_frame_buffer(ctx);
+  if (fb) {
+    GRect fbb = gbitmap_get_bounds(fb);
+    s_fb_w = fbb.size.w;
+    s_fb_h = fbb.size.h < FB_ROWS_MAX ? fbb.size.h : FB_ROWS_MAX;
+    for (int y = 0; y < s_fb_h; y++) s_rows[y] = gbitmap_get_data_row_info(fb, y);
 
-  // Sonne/Mond unterhalb der Uhrzeit; darf hinter den Bergen versinken
-  int sky_top = TIME_Y + TIME_HEIGHT + TIME_INK_GAP;
-  draw_sky_body(ctx, b, wd, day, sky_top, permille(b.size.h, 470));
+    // Himmel: bei Print ein Verlauf von oben bis knapp unter den Horizont
+    Paint sky = paint_solid(wd->flat.sky, wd->soft.sky);
+    sky.lv_b = wd->soft.sky_lv_bottom;
+    sky.yb = permille(b.size.h, SKY_GRADIENT_END);
+    for (int y = 0; y < s_fb_h; y++) span(y, 0, s_fb_w, &sky);
 
-  if (rnd_range(0, 99) < VALLEY_CHANCE) {
-    draw_valley(ctx, b, wd);
-  } else {
-    draw_ridges(ctx, b, wd);
+    // Sonne/Mond unterhalb der Uhrzeit; darf hinter den Bergen versinken
+    Paint sun = paint_solid(wd->flat.sun, wd->soft.sun);
+    int sky_top = TIME_Y + TIME_HEIGHT + TIME_INK_GAP;
+    draw_sky_body(b, &sun, &sky, day, sky_top, permille(b.size.h, 470));
+
+    if (rnd_range(0, 99) < VALLEY_CHANCE) {
+      draw_valley(b, wd, &sky);
+    } else {
+      draw_ridges(b, wd);
+    }
+    graphics_release_frame_buffer(ctx, fb);
   }
 
   static char time_buf[8];
   clock_copy_time_string(time_buf, sizeof(time_buf));
-  graphics_context_set_text_color(ctx, GColorFromHEX(wd->ink));
+  graphics_context_set_text_color(ctx, GColorFromHEX(wd->flat.ink));
   graphics_draw_text(ctx, time_buf, s_time_font,
                      GRect(0, TIME_Y, b.size.w, TIME_HEIGHT),
                      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
@@ -336,6 +482,7 @@ static void settings_defaults(void) {
   s_settings.interval = 60;
   s_settings.world = 0;
   s_settings.shake = true;
+  s_settings.texture = TEXTURE_FLAT;
 }
 
 static void settings_fix(void) {
@@ -345,6 +492,7 @@ static void settings_fix(void) {
   if (s_settings.world >= WORLD_COUNT && s_settings.world != WORLD_SURPRISE) {
     s_settings.world = 0;
   }
+  if (s_settings.texture > TEXTURE_PRINT) s_settings.texture = TEXTURE_FLAT;
 }
 
 static void settings_load(void) {
@@ -385,6 +533,7 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
   if ((t = dict_find(iter, MESSAGE_KEY_INTERVAL))) s_settings.interval = tuple_int(t);
   if ((t = dict_find(iter, MESSAGE_KEY_WORLD)))    s_settings.world = tuple_int(t);
   if ((t = dict_find(iter, MESSAGE_KEY_SHAKE)))    s_settings.shake = tuple_int(t) != 0;
+  if ((t = dict_find(iter, MESSAGE_KEY_TEXTURE)))  s_settings.texture = tuple_int(t);
   settings_fix();
   settings_save();
   shake_apply();

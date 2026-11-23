@@ -29,6 +29,16 @@ module.exports = [
       },
       {
         "type": "select",
+        "messageKey": "TEXTURE",
+        "defaultValue": "0",
+        "label": "Style",
+        "options": [
+          { "label": "Flat (pure palette colours)", "value": "0" },
+          { "label": "Print (mixed pastel tones, soft sky)", "value": "1" }
+        ]
+      },
+      {
+        "type": "select",
         "messageKey": "INTERVAL",
         "defaultValue": "60",
         "label": "New landscape",

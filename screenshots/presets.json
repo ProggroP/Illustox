@@ -1,7 +1,7 @@
 {
   "presets": [
-    { "name": "desert", "settings": { "WORLD": "0", "INTERVAL": "60", "SHAKE": 1 }, "time": "10:09:00", "wait": 6 },
-    { "name": "dusk",   "settings": { "WORLD": "1", "INTERVAL": "60", "SHAKE": 1 }, "time": "21:42:00", "wait": 6 },
-    { "name": "ocean",  "settings": { "WORLD": "3", "INTERVAL": "60", "SHAKE": 1 }, "time": "14:27:00", "wait": 6 }
+    { "name": "desert", "settings": { "WORLD": "0", "INTERVAL": "60", "SHAKE": 1, "TEXTURE": "0" }, "time": "10:09:00", "wait": 6 },
+    { "name": "dusk",   "settings": { "WORLD": "1", "INTERVAL": "60", "SHAKE": 1, "TEXTURE": "0" }, "time": "21:42:00", "wait": 6 },
+    { "name": "candy_print", "settings": { "WORLD": "5", "INTERVAL": "60", "SHAKE": 1, "TEXTURE": "1" }, "time": "14:27:00", "wait": 6 }
   ]
 }
